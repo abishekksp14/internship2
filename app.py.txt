@@ -1,0 +1,97 @@
+# Updated version for Telegram + Render (without Gradio)
+# Replace YOUR_TOKEN_HERE with your Telegram Bot Token
+
+import logging
+import pandas as pd
+import re
+import string
+import torch
+from datasets import Dataset
+from transformers import BertTokenizer, BertForSequenceClassification, Trainer, TrainingArguments, pipeline
+from telegram import Update
+from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler, MessageHandler, filters
+
+# Logger
+logging.basicConfig(
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO
+)
+
+# Load and preprocess dataset (one-time during boot)
+df = pd.read_csv('dataset.csv')  # Save your dataset as 'dataset.csv' in the same dir
+df = df.dropna(subset=['Label'])
+
+def clean_text(text):
+    text = str(text).lower()
+    text = re.sub(r"http\S+|www\S+|https\S+", '', text, flags=re.MULTILINE)
+    text = re.sub(r'@\w+|#', '', text)
+    text = text.translate(str.maketrans('', '', string.punctuation))
+    text = re.sub(r'\d+', '', text)
+    text = re.sub(r'\s+', ' ', text).strip()
+    return text
+
+df['Clean_Text'] = df['Text'].apply(clean_text)
+df['Label'] = df['Label'].apply(lambda x: 1 if x.lower() == 'bullying' else 0)
+df['text'] = df['Clean_Text']
+df = df[['text', 'Label']]
+
+dataset = Dataset.from_pandas(df)
+dataset = dataset.train_test_split(test_size=0.2)
+
+# Tokenizer and model
+checkpoint = "bert-base-uncased"
+tokenizer = BertTokenizer.from_pretrained(checkpoint)
+model = BertForSequenceClassification.from_pretrained(checkpoint, num_labels=2)
+
+# Tokenize
+encoded_dataset = dataset.map(lambda x: tokenizer(x["text"], truncation=True, padding='max_length', max_length=128), batched=True)
+encoded_dataset = encoded_dataset.rename_column("Label", "labels")
+encoded_dataset.set_format("torch")
+
+# Train model
+training_args = TrainingArguments(
+    output_dir="./results",
+    per_device_train_batch_size=8,
+    per_device_eval_batch_size=8,
+    num_train_epochs=3,
+    evaluation_strategy="epoch",
+    save_strategy="epoch",
+    load_best_model_at_end=True,
+    logging_dir="./logs"
+)
+
+trainer = Trainer(
+    model=model,
+    args=training_args,
+    train_dataset=encoded_dataset["train"],
+    eval_dataset=encoded_dataset["test"]
+)
+
+trainer.train()
+
+# Inference pipeline
+classifier = pipeline("text-classification", model=model, tokenizer=tokenizer)
+
+# Telegram Handlers
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("👋 Hi! Send me a message and I'll detect if it's bullying or respectful.")
+
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_text = update.message.text
+    result = classifier(user_text)[0]
+    label = result['label']
+    confidence = round(result['score'] * 100, 2)
+    if label == 'LABEL_1':
+        response = f"⚠️ *Bullying or Harassment Detected!*\nConfidence: {confidence}%"
+    else:
+        response = f"✅ *Looks safe and respectful!*\nConfidence: {confidence}%"
+    await update.message.reply_text(response, parse_mode='Markdown')
+
+# App Init
+app = ApplicationBuilder().token("YOUR_TOKEN_HERE").build()
+app.add_handler(CommandHandler("start", start))
+app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+
+# Run bot
+if __name__ == "__main__":
+    print("Bot is running...")
+    app.run_polling()
