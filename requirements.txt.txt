@@ -1,0 +1,5 @@
+transformers
+datasets
+pandas
+torch
+python-telegram-bot==20.0
