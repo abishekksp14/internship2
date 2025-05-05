@@ -22,7 +22,7 @@ from telegram.ext import (
 )
 
 # ---- Configuration ----
-TOKEN = os.getenv("8047375710:AAG_-dS9BjjWcXCcNEBrM5xTGU1bI1V3wFI")  # Set via Render env vars
+TOKEN = os.getenv("cyberriya_bot")  # Set via Render env vars
 DATASET_PATH = "dataset.csv"
 MODEL_CHECKPOINT = "bert-base-uncased"
 LOGGING_LEVEL = logging.INFO
